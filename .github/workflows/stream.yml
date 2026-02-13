@@ -1,23 +1,26 @@
-name: Perpetual Stream
+name: Perpetual Dual Stream
 on:
-  workflow_dispatch: # التشغيل يدوي فقط للتحكم الكامل ومنع التراكم
+  workflow_dispatch:
 
 jobs:
   stream:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - name: System Setup
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb ffmpeg pulseaudio google-chrome-stable fonts-kacst > /dev/null
-          # تشغيل محرك الصوت
+          sudo apt-get install -y -qq xvfb ffmpeg pulseaudio google-chrome-stable > /dev/null
+          # تشغيل محرك الصوت الوهمي
           pulseaudio -D --exit-idle-time=-1 --disallow-exit || true
           
       - name: Python Setup
-        run: pip install selenium pyvirtualdisplay
+        run: pip install selenium pyvirtualdisplay requests
 
-      - name: Start Vertical Stream
+      - name: Start Streaming Processes
         env:
-          RTMP_KEY: ${{ secrets.RTMP_KEY }}
+          # ربط الـ Secrets بالمتغيرات التي يقرأها الكود
+          R1: ${{ secrets.R1 }}
+          R2: ${{ secrets.R2 }}
         run: python main.py
