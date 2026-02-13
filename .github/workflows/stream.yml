@@ -1,6 +1,6 @@
 name: Perpetual Dual Stream
 on:
-  workflow_dispatch:
+  workflow_dispatch: # التشغيل يدوي
 
 jobs:
   stream:
@@ -13,18 +13,22 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb ffmpeg pulseaudio google-chrome-stable > /dev/null
           
-          # 1. تشغيل محرك الصوت
+          # 1. تشغيل محرك الصوت وتصفير الإعدادات
           pulseaudio -D --exit-idle-time=-1 --disallow-exit || true
           
-          # 2. إنشاء قنوات صوتية وهمية مستقلة
+          # 2. إنشاء قناتين صوتيتين وهميتين (سلك لكل بث)
           pactl load-module module-null-sink sink_name=Sink1 sink_properties=device.description=Stream1_Audio
           pactl load-module module-null-sink sink_name=Sink2 sink_properties=device.description=Stream2_Audio
           
+          # 3. منع دمج الأصوات تلقائياً
+          pactl unload-module module-suspend-on-idle || true
+
       - name: Python Setup
         run: pip install selenium pyvirtualdisplay requests
 
       - name: Start Streaming Processes
         env:
+          # سحب المفاتيح من الـ Secrets
           R1: ${{ secrets.R1 }}
           R2: ${{ secrets.R2 }}
         run: python main.py
