@@ -25,13 +25,41 @@ def get_control_data():
     except: pass
     return None
 
+def apply_custom_changes(driver):
+    """
+    هذه الوظيفة تقوم بتنفيذ أي تغييرات تريدها على تصميم الموقع
+    بمجرد تحميل الصفحة.
+    """
+    try:
+        # كود JavaScript لتعديل التنسيقات (CSS)
+        # مثال: تغيير خلفية الصفحة وإخفاء عناصر معينة
+        script = """
+        var style = document.createElement('style');
+        style.innerHTML = `
+            /* ضع هنا أي تنسيقات CSS تريدها */
+            body { 
+                background-color: black !important; 
+            }
+            /* مثال لإخفاء إعلانات أو أزرار غير مرغوبة */
+            .ads-container, #footer-id { 
+                display: none !important; 
+            }
+        `;
+        document.head.appendChild(style);
+        
+        // يمكنك أيضاً تنفيذ أوامر JS أخرى هنا
+        console.log('Custom styles applied!');
+        """
+        driver.execute_script(script)
+    except Exception as e:
+        print(f"⚠️ فشل تطبيق التنسيقات: {e}")
+
 def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
-    print(f"📡 انطلاق البث {stream_id} - نظام المزامنة القصوى")
+    print(f"📡 انطلاق البث {stream_id} - نظام عدم الحفظ والتنسيق المخصص")
     
-    # إعداد البيئة (إضافة إجبار زمن استجابة منخفض للصوت)
     env_vars = os.environ.copy()
     env_vars['PULSE_SINK'] = sink_name
-    env_vars['PULSE_LATENCY_MSEC'] = '1' # السر في منع تأخير الصوت
+    env_vars['PULSE_LATENCY_MSEC'] = '1'
 
     disp = Display(visible=0, size=(width, height), backend='xvfb')
     disp.start()
@@ -46,7 +74,12 @@ def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
     opts.add_argument('--hide-scrollbars')
     opts.add_argument('--kiosk')
     
-    # إخفاء شريط "Chrome is being controlled"
+    # --- 🔒 إعدادات منع حفظ البيانات ---
+    opts.add_argument('--incognito') # تفعيل وضع التخفي
+    opts.add_argument('--disable-cache') # تعطيل الكاش
+    opts.add_argument('--disk-cache-size=1') # جعل حجم الكاش أصغر ما يمكن
+    opts.add_argument('--media-cache-size=1')
+    
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
     opts.add_experimental_option('useAutomationExtension', False)
 
@@ -69,42 +102,45 @@ def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
                         if ffmpeg_process: ffmpeg_process.terminate()
                         is_streaming = False
                 else:
+                    # إذا تغير الرابط أو بدأت عملية بث جديدة
                     if not is_streaming or target_url != current_url:
+                        # حذف الكوكيز قبل الدخول للرابط لضمان "نظافة" الجلسة
+                        driver.delete_all_cookies() 
+                        
                         driver.get(target_url)
                         current_url = target_url
+                        
+                        # --- 🎨 تطبيق التغييرات فور التحميل ---
+                        time.sleep(2) # انتظار بسيط للتأكد من تحميل الـ DOM
+                        apply_custom_changes(driver)
+                        
                         if not is_streaming:
                             driver.execute_script("setInterval(() => { window.scrollBy(0,1); window.scrollBy(0,-1); }, 50);")
                             
-                            # --- أمر FFmpeg المحدث للمزامنة الفائقة ---
                             ffmpeg_cmd = [
                                 'ffmpeg', '-y',
-                                '-fflags', 'nobuffer+genpts', # منع التخزين المؤقت وتوليد نقاط توقيت
-                                '-thread_queue_size', '8192', # رفع الكيوي لأقصى درجة
+                                '-fflags', 'nobuffer+genpts',
+                                '-thread_queue_size', '8192',
                                 '-f', 'x11grab',
                                 '-draw_mouse', '0',
                                 '-framerate', '60',
                                 '-video_size', f'{width}x{height}',
                                 '-i', f":{disp.display}",
-                                
                                 '-f', 'pulse', 
                                 '-thread_queue_size', '8192',
                                 '-i', f"{sink_name}.monitor",
-                                
                                 '-c:v', 'libx264',
                                 '-preset', 'ultrafast',
-                                '-tune', 'zerolatency', # تقليل التأخير للصفر
+                                '-tune', 'zerolatency',
                                 '-r', '60',
                                 '-g', '120',
                                 '-b:v', '4000k',
                                 '-pix_fmt', 'yuv420p',
-                                
                                 '-c:a', 'aac',
                                 '-b:a', '128k',
                                 '-ar', '44100',
-                                # فلتر المزامنة الأصلي الخاص بك مع تعديل طفيف للثبات
                                 '-af', 'aresample=async=1:min_hard_comp=0.100000:first_pts=0',
-                                
-                                '-vsync', '1', # إجبار مزامنة الفيديو مع الصوت (CFR)
+                                '-vsync', '1',
                                 '-f', 'flv', f"rtmp://a.rtmp.youtube.com/live2/{rtmp_key}"
                             ]
                             if ffmpeg_process: ffmpeg_process.terminate()
