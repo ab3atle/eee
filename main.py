@@ -26,36 +26,32 @@ def get_control_data():
     return None
 
 def apply_custom_changes(driver):
-    """
-    هذه الوظيفة تقوم بتنفيذ أي تغييرات تريدها على تصميم الموقع
-    بمجرد تحميل الصفحة.
-    """
+    """حقن التنسيقات المخصصة فور تحميل الصفحة"""
     try:
-        # كود JavaScript لتعديل التنسيقات (CSS)
-        # مثال: تغيير خلفية الصفحة وإخفاء عناصر معينة
         script = """
         var style = document.createElement('style');
         style.innerHTML = `
-            /* ضع هنا أي تنسيقات CSS تريدها */
-            body { 
-                background-color: black !important; 
-            }
-            /* مثال لإخفاء إعلانات أو أزرار غير مرغوبة */
-            .ads-container, #footer-id { 
-                display: none !important; 
-            }
+            body { background-color: #000 !important; }
+            /* أضف أي تنسيقات CSS إضافية هنا */
         `;
         document.head.appendChild(style);
-        
-        // يمكنك أيضاً تنفيذ أوامر JS أخرى هنا
-        console.log('Custom styles applied!');
+        console.log('Applied custom styles and reset scripts.');
         """
         driver.execute_script(script)
+    except: pass
+
+def clear_browser_data(driver):
+    """تنظيف شامل للكوكيز، التخزين المحلي، وجلسة العمل"""
+    try:
+        driver.delete_all_cookies()
+        driver.execute_script("window.localStorage.clear();")
+        driver.execute_script("window.sessionStorage.clear();")
+        print("🧹 تم مسح جميع البيانات القديمة بنجاح.")
     except Exception as e:
-        print(f"⚠️ فشل تطبيق التنسيقات: {e}")
+        print(f"⚠️ خطأ أثناء التنظيف: {e}")
 
 def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
-    print(f"📡 انطلاق البث {stream_id} - نظام عدم الحفظ والتنسيق المخصص")
+    print(f"📡 مراقب البث {stream_id} يعمل الآن...")
     
     env_vars = os.environ.copy()
     env_vars['PULSE_SINK'] = sink_name
@@ -71,17 +67,9 @@ def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
     opts.add_argument('--disable-gpu')
     opts.add_argument(f'--window-size={width},{height}')
     opts.add_argument('--autoplay-policy=no-user-gesture-required')
-    opts.add_argument('--hide-scrollbars')
-    opts.add_argument('--kiosk')
-    
-    # --- 🔒 إعدادات منع حفظ البيانات ---
-    opts.add_argument('--incognito') # تفعيل وضع التخفي
-    opts.add_argument('--disable-cache') # تعطيل الكاش
-    opts.add_argument('--disk-cache-size=1') # جعل حجم الكاش أصغر ما يمكن
-    opts.add_argument('--media-cache-size=1')
-    
+    opts.add_argument('--incognito') # وضع التخفي
+    opts.add_argument('--disable-cache')
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-    opts.add_experimental_option('useAutomationExtension', False)
 
     service = Service(env=env_vars)
     driver = webdriver.Chrome(service=service, options=opts)
@@ -97,55 +85,48 @@ def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
                 config = controls[stream_id-1]
                 target_url, status = config['url'], config['status']
 
+                # حالة الإيقاف (0)
                 if status == "0":
                     if is_streaming:
+                        print(f"⏹️ تم إيقاف البث {stream_id} من التحكم.")
                         if ffmpeg_process: ffmpeg_process.terminate()
+                        driver.get("about:blank") # العودة لصفحة فارغة لتوفير الموارد
                         is_streaming = False
-                else:
-                    # إذا تغير الرابط أو بدأت عملية بث جديدة
+                        current_url = "" # تصفير الرابط لضمان إعادة التحميل عند العودة للعمل
+
+                # حالة التشغيل (1)
+                elif status == "1":
+                    # إذا كان البث متوقفاً أو تغير الرابط، نبدأ عملية "البداية النظيفة"
                     if not is_streaming or target_url != current_url:
-                        # حذف الكوكيز قبل الدخول للرابط لضمان "نظافة" الجلسة
-                        driver.delete_all_cookies() 
+                        print(f"🚀 بدء/إعادة تشغيل البث {stream_id}...")
                         
-                        driver.get(target_url)
-                        current_url = target_url
+                        # 1. التنظيف العميق قبل تحميل الصفحة
+                        driver.get(target_url) 
+                        clear_browser_data(driver)
+                        driver.refresh() # إعادة تحميل لضمان تطبيق التنظيف
                         
-                        # --- 🎨 تطبيق التغييرات فور التحميل ---
-                        time.sleep(2) # انتظار بسيط للتأكد من تحميل الـ DOM
+                        # 2. تطبيق التنسيقات بعد التحميل
+                        time.sleep(3) 
                         apply_custom_changes(driver)
                         
+                        # 3. تشغيل FFmpeg إذا لم يكن يعمل
                         if not is_streaming:
-                            driver.execute_script("setInterval(() => { window.scrollBy(0,1); window.scrollBy(0,-1); }, 50);")
-                            
                             ffmpeg_cmd = [
-                                'ffmpeg', '-y',
-                                '-fflags', 'nobuffer+genpts',
-                                '-thread_queue_size', '8192',
-                                '-f', 'x11grab',
-                                '-draw_mouse', '0',
-                                '-framerate', '60',
-                                '-video_size', f'{width}x{height}',
-                                '-i', f":{disp.display}",
-                                '-f', 'pulse', 
-                                '-thread_queue_size', '8192',
-                                '-i', f"{sink_name}.monitor",
-                                '-c:v', 'libx264',
-                                '-preset', 'ultrafast',
-                                '-tune', 'zerolatency',
-                                '-r', '60',
-                                '-g', '120',
-                                '-b:v', '4000k',
-                                '-pix_fmt', 'yuv420p',
-                                '-c:a', 'aac',
-                                '-b:a', '128k',
-                                '-ar', '44100',
-                                '-af', 'aresample=async=1:min_hard_comp=0.100000:first_pts=0',
-                                '-vsync', '1',
+                                'ffmpeg', '-y', '-fflags', 'nobuffer+genpts',
+                                '-f', 'x11grab', '-draw_mouse', '0', '-framerate', '60',
+                                '-video_size', f'{width}x{height}', '-i', f":{disp.display}",
+                                '-f', 'pulse', '-i', f"{sink_name}.monitor",
+                                '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
+                                '-b:v', '4000k', '-pix_fmt', 'yuv420p',
+                                '-c:a', 'aac', '-b:a', '128k', '-ar', '44100',
+                                '-af', 'aresample=async=1', '-vsync', '1',
                                 '-f', 'flv', f"rtmp://a.rtmp.youtube.com/live2/{rtmp_key}"
                             ]
                             if ffmpeg_process: ffmpeg_process.terminate()
                             ffmpeg_process = subprocess.Popen(ffmpeg_cmd, env=env_vars)
                             is_streaming = True
+                            current_url = target_url
+
             time.sleep(10)
     finally:
         if ffmpeg_process: ffmpeg_process.terminate()
