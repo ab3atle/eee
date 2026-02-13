@@ -8,6 +8,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from multiprocessing import Process
 
+# --- 🛠️ إعدادات التحكم ---
 CONTROL_URL = "https://meja.do.am/asd/url2.txt"
 
 def get_control_data():
@@ -25,22 +26,31 @@ def get_control_data():
     return None
 
 def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
-    print(f"📡 بدء البث {stream_id} (مزامنة صوتية + 60fps)...")
+    print(f"📡 بدء البث {stream_id} - قناة: {sink_name}")
     
+    # إعداد البيئة الصوتية والعرض
     env_vars = os.environ.copy()
     env_vars['PULSE_SINK'] = sink_name
 
+    # شاشة وهمية برقم فريد لكل بث لضمان عدم التداخل
     disp = Display(visible=0, size=(width, height), backend='xvfb')
     disp.start()
     env_vars['DISPLAY'] = f":{disp.display}"
 
+    # إعدادات الكروم الاحترافية + إزالة شريط التحكم الآلي
     opts = Options()
     opts.add_argument('--no-sandbox')
     opts.add_argument('--disable-dev-shm-usage')
+    opts.add_argument('--disable-gpu')
     opts.add_argument(f'--window-size={width},{height}')
     opts.add_argument('--autoplay-policy=no-user-gesture-required')
     opts.add_argument('--hide-scrollbars')
     opts.add_argument('--kiosk')
+    opts.add_argument('--force-color-profile=srgb')
+    
+    # --- إزالة إشعار "Chrome is being controlled" ---
+    opts.add_experimental_option("excludeSwitches", ["enable-automation"])
+    opts.add_experimental_option('useAutomationExtension', False)
 
     service = Service(env=env_vars)
     driver = webdriver.Chrome(service=service, options=opts)
@@ -64,15 +74,13 @@ def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
                     if not is_streaming or target_url != current_url:
                         driver.get(target_url)
                         current_url = target_url
-                        
                         if not is_streaming:
                             driver.execute_script("setInterval(() => { window.scrollBy(0,1); window.scrollBy(0,-1); }, 50);")
                             
-                            # --- أمر FFmpeg المضبط للمزامنة الصارمة ---
+                            # --- نظام المزامنة الخاص بك (من الكود المرجعي) ---
                             ffmpeg_cmd = [
                                 'ffmpeg', '-y',
-                                '-use_wallclock_as_timestamps', '1', # إجبار التوقيت الفعلي للدمج
-                                '-thread_queue_size', '8192', # زيادة الكيوي لأقصى درجة
+                                '-thread_queue_size', '4096',
                                 '-f', 'x11grab',
                                 '-draw_mouse', '0',
                                 '-framerate', '60',
@@ -80,21 +88,22 @@ def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
                                 '-i', f":{disp.display}",
                                 
                                 '-f', 'pulse', 
-                                '-thread_queue_size', '8192',
-                                '-i', f"{sink_name}.monitor",
+                                '-thread_queue_size', '4096',
+                                '-i', f"{sink_name}.monitor", # السحب من القناة المعزولة
                                 
                                 '-c:v', 'libx264',
                                 '-preset', 'ultrafast',
                                 '-tune', 'zerolatency',
-                                '-r', '60',
-                                '-g', '120',
-                                '-b:v', '4000k',
+                                '-b:v', '4000k', # معدل البث المطلوب
+                                '-maxrate', '4000k',
+                                '-bufsize', '8000k',
                                 '-pix_fmt', 'yuv420p',
+                                '-g', '120',
                                 
                                 '-c:a', 'aac',
                                 '-b:a', '128k',
                                 '-ar', '44100',
-                                # الفلتر السحري للمزامنة من الكود الأول
+                                # فلتر المزامنة الأصلي الخاص بك
                                 '-af', 'aresample=async=1:min_hard_comp=0.100000:first_pts=0',
                                 
                                 '-f', 'flv', f"rtmp://a.rtmp.youtube.com/live2/{rtmp_key}"
