@@ -25,7 +25,7 @@ def get_control_data():
     return None
 
 def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
-    print(f"🚀 انطلاق البث {stream_id} بقوة 60fps...")
+    print(f"📡 بدء البث {stream_id} (مزامنة صوتية + 60fps)...")
     
     env_vars = os.environ.copy()
     env_vars['PULSE_SINK'] = sink_name
@@ -37,16 +37,10 @@ def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
     opts = Options()
     opts.add_argument('--no-sandbox')
     opts.add_argument('--disable-dev-shm-usage')
-    opts.add_argument('--disable-gpu') # لتقليل الحمل على المعالج الوهمي
     opts.add_argument(f'--window-size={width},{height}')
     opts.add_argument('--autoplay-policy=no-user-gesture-required')
     opts.add_argument('--hide-scrollbars')
     opts.add_argument('--kiosk')
-    # إضافات لتقليل استهلاك الرام والمعالج للمتصفح
-    opts.add_argument('--disable-extensions')
-    opts.add_argument('--disable-background-timer-throttling')
-    opts.add_argument('--disable-backgrounding-occluded-windows')
-    opts.add_argument('--disable-renderer-backgrounding')
 
     service = Service(env=env_vars)
     driver = webdriver.Chrome(service=service, options=opts)
@@ -74,29 +68,35 @@ def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
                         if not is_streaming:
                             driver.execute_script("setInterval(() => { window.scrollBy(0,1); window.scrollBy(0,-1); }, 50);")
                             
-                            # أمر FFmpeg الخارق للثبات (60fps & 4000k)
+                            # --- أمر FFmpeg المضبط للمزامنة الصارمة ---
                             ffmpeg_cmd = [
                                 'ffmpeg', '-y',
-                                '-thread_queue_size', '4096', # رفع الكيوي لامتصاص الضغط
+                                '-use_wallclock_as_timestamps', '1', # إجبار التوقيت الفعلي للدمج
+                                '-thread_queue_size', '8192', # زيادة الكيوي لأقصى درجة
                                 '-f', 'x11grab',
                                 '-draw_mouse', '0',
-                                '-framerate', '60', # طلب 60 فريم من الشاشة
+                                '-framerate', '60',
                                 '-video_size', f'{width}x{height}',
                                 '-i', f":{disp.display}",
-                                '-f', 'pulse', '-thread_queue_size', '4096',
+                                
+                                '-f', 'pulse', 
+                                '-thread_queue_size', '8192',
                                 '-i', f"{sink_name}.monitor",
+                                
                                 '-c:v', 'libx264',
-                                '-preset', 'ultrafast', # أسرع نمط لتقليل حمل المعالج
+                                '-preset', 'ultrafast',
                                 '-tune', 'zerolatency',
-                                '-r', '60', # إجبار المخرج على 60 فريم ثابتة
-                                '-g', '120', # Keyframe كل ثانيتين لليوتيوب
-                                '-b:v', '4000k', # معدل بث ثابت 4000
-                                '-minrate', '4000k',
-                                '-maxrate', '4000k',
-                                '-bufsize', '8000k', # ذاكرة مؤقتة للثبات
+                                '-r', '60',
+                                '-g', '120',
+                                '-b:v', '4000k',
                                 '-pix_fmt', 'yuv420p',
-                                '-c:a', 'aac', '-b:a', '128k', '-ar', '44100',
-                                '-af', 'aresample=async=1',
+                                
+                                '-c:a', 'aac',
+                                '-b:a', '128k',
+                                '-ar', '44100',
+                                # الفلتر السحري للمزامنة من الكود الأول
+                                '-af', 'aresample=async=1:min_hard_comp=0.100000:first_pts=0',
+                                
                                 '-f', 'flv', f"rtmp://a.rtmp.youtube.com/live2/{rtmp_key}"
                             ]
                             if ffmpeg_process: ffmpeg_process.terminate()
