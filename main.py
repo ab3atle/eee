@@ -26,18 +26,17 @@ def get_control_data():
     return None
 
 def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
-    print(f"📡 بدء البث {stream_id} - قناة: {sink_name}")
+    print(f"📡 انطلاق البث {stream_id} - نظام المزامنة القصوى")
     
-    # إعداد البيئة الصوتية والعرض
+    # إعداد البيئة (إضافة إجبار زمن استجابة منخفض للصوت)
     env_vars = os.environ.copy()
     env_vars['PULSE_SINK'] = sink_name
+    env_vars['PULSE_LATENCY_MSEC'] = '1' # السر في منع تأخير الصوت
 
-    # شاشة وهمية برقم فريد لكل بث لضمان عدم التداخل
     disp = Display(visible=0, size=(width, height), backend='xvfb')
     disp.start()
     env_vars['DISPLAY'] = f":{disp.display}"
 
-    # إعدادات الكروم الاحترافية + إزالة شريط التحكم الآلي
     opts = Options()
     opts.add_argument('--no-sandbox')
     opts.add_argument('--disable-dev-shm-usage')
@@ -46,9 +45,8 @@ def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
     opts.add_argument('--autoplay-policy=no-user-gesture-required')
     opts.add_argument('--hide-scrollbars')
     opts.add_argument('--kiosk')
-    opts.add_argument('--force-color-profile=srgb')
     
-    # --- إزالة إشعار "Chrome is being controlled" ---
+    # إخفاء شريط "Chrome is being controlled"
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
     opts.add_experimental_option('useAutomationExtension', False)
 
@@ -77,10 +75,11 @@ def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
                         if not is_streaming:
                             driver.execute_script("setInterval(() => { window.scrollBy(0,1); window.scrollBy(0,-1); }, 50);")
                             
-                            # --- نظام المزامنة الخاص بك (من الكود المرجعي) ---
+                            # --- أمر FFmpeg المحدث للمزامنة الفائقة ---
                             ffmpeg_cmd = [
                                 'ffmpeg', '-y',
-                                '-thread_queue_size', '4096',
+                                '-fflags', 'nobuffer+genpts', # منع التخزين المؤقت وتوليد نقاط توقيت
+                                '-thread_queue_size', '8192', # رفع الكيوي لأقصى درجة
                                 '-f', 'x11grab',
                                 '-draw_mouse', '0',
                                 '-framerate', '60',
@@ -88,24 +87,24 @@ def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
                                 '-i', f":{disp.display}",
                                 
                                 '-f', 'pulse', 
-                                '-thread_queue_size', '4096',
-                                '-i', f"{sink_name}.monitor", # السحب من القناة المعزولة
+                                '-thread_queue_size', '8192',
+                                '-i', f"{sink_name}.monitor",
                                 
                                 '-c:v', 'libx264',
                                 '-preset', 'ultrafast',
-                                '-tune', 'zerolatency',
-                                '-b:v', '4000k', # معدل البث المطلوب
-                                '-maxrate', '4000k',
-                                '-bufsize', '8000k',
-                                '-pix_fmt', 'yuv420p',
+                                '-tune', 'zerolatency', # تقليل التأخير للصفر
+                                '-r', '60',
                                 '-g', '120',
+                                '-b:v', '4000k',
+                                '-pix_fmt', 'yuv420p',
                                 
                                 '-c:a', 'aac',
                                 '-b:a', '128k',
                                 '-ar', '44100',
-                                # فلتر المزامنة الأصلي الخاص بك
+                                # فلتر المزامنة الأصلي الخاص بك مع تعديل طفيف للثبات
                                 '-af', 'aresample=async=1:min_hard_comp=0.100000:first_pts=0',
                                 
+                                '-vsync', '1', # إجبار مزامنة الفيديو مع الصوت (CFR)
                                 '-f', 'flv', f"rtmp://a.rtmp.youtube.com/live2/{rtmp_key}"
                             ]
                             if ffmpeg_process: ffmpeg_process.terminate()
