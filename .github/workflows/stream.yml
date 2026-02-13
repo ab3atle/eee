@@ -13,13 +13,17 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb ffmpeg pulseaudio google-chrome-stable > /dev/null
           
-          # تشغيل محرك الصوت
+          # تشغيل محرك الصوت بضبط زمن استجابة سريع جداً
           pulseaudio -D --exit-idle-time=-1 --disallow-exit || true
           
-          # إنشاء قناتين مستقلتين تماماً
-          pactl load-module module-null-sink sink_name=Sink1 sink_properties=device.description=Stream1
-          pactl load-module module-null-sink sink_name=Sink2 sink_properties=device.description=Stream2
+          # إنشاء القنوات المستقلة
+          pactl load-module module-null-sink sink_name=Sink1
+          pactl load-module module-null-sink sink_name=Sink2
           
+          # ضبط جودة الصوت لضمان عدم وجود تأخير (Latency)
+          pacmd "update-sink-proplist Sink1 device.description=Stream1"
+          pacmd "update-sink-proplist Sink2 device.description=Stream2"
+
       - name: Python Setup
         run: pip install selenium pyvirtualdisplay requests
 
