@@ -16,9 +16,9 @@ jobs:
           # تشغيل محرك الصوت
           pulseaudio -D --exit-idle-time=-1 --disallow-exit || true
           
-          # إنشاء قنوات مستقلة
-          pactl load-module module-null-sink sink_name=Sink1
-          pactl load-module module-null-sink sink_name=Sink2
+          # إنشاء قناتين مستقلتين تماماً
+          pactl load-module module-null-sink sink_name=Sink1 sink_properties=device.description=Stream1
+          pactl load-module module-null-sink sink_name=Sink2 sink_properties=device.description=Stream2
           
       - name: Python Setup
         run: pip install selenium pyvirtualdisplay requests
