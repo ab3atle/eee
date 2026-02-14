@@ -12,11 +12,9 @@ from multiprocessing import Process
 CONTROL_URL = "https://meja.do.am/asd/url2.txt"
 
 def get_control_data():
-    """جلب وتنظيف البيانات من الملف لمنع التكرار بسبب المسافات"""
     try:
         response = requests.get(f"{CONTROL_URL}?t={int(time.time())}", timeout=5)
         if response.status_code == 200:
-            # تنظيف الأسطر من أي مسافات زائدة
             lines = [line.strip() for line in response.text.strip().split('\n') if line.strip()]
             results = []
             for line in lines:
@@ -27,40 +25,7 @@ def get_control_data():
     except: pass
     return None
 
-def apply_custom_changes(driver):
-    """حقن التنسيقات وإخفاء العناصر غير المرغوبة"""
-    try:
-        script = """
-        var style = document.createElement('style');
-        style.innerHTML = `
-            body { background-color: #000 !important; overflow: hidden !important; }
-            #header, .ads-layer { display: none !important; }
-        `;
-        document.head.appendChild(style);
-        """
-        driver.execute_script(script)
-    except: pass
-
-def clear_browser_data(driver):
-    """مسح شامل للبيانات لبدء جلسة نظيفة"""
-    try:
-        driver.delete_all_cookies()
-        driver.execute_script("window.localStorage.clear();")
-        driver.execute_script("window.sessionStorage.clear();")
-    except: pass
-
-def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
-    print(f"🟢 بدأ مراقب البث {stream_id} (نظام الحماية نشط)")
-    
-    # إعدادات الصوت والبيئة
-    env_vars = os.environ.copy()
-    env_vars['PULSE_SINK'] = sink_name
-    env_vars['PULSE_LATENCY_MSEC'] = '20'
-
-    disp = Display(visible=0, size=(width, height), backend='xvfb')
-    disp.start()
-    env_vars['DISPLAY'] = f":{disp.display}"
-
+def get_driver_options(width, height):
     opts = Options()
     opts.add_argument('--no-sandbox')
     opts.add_argument('--disable-dev-shm-usage')
@@ -72,12 +37,24 @@ def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
     opts.add_argument('--force-device-scale-factor=1')
     opts.add_argument('--autoplay-policy=no-user-gesture-required')
     opts.add_argument('--incognito')
+    opts.add_argument('--disable-cache')
     opts.add_argument('--disable-blink-features=AutomationControlled')
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
     opts.add_experimental_option('useAutomationExtension', False)
+    return opts
 
-    driver = webdriver.Chrome(options=opts)
+def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
+    print(f"🟢 بدأ مراقب البث {stream_id}")
+    
+    env_vars = os.environ.copy()
+    env_vars['PULSE_SINK'] = sink_name
+    env_vars['PULSE_LATENCY_MSEC'] = '20'
 
+    disp = Display(visible=0, size=(width, height), backend='xvfb')
+    disp.start()
+    env_vars['DISPLAY'] = f":{disp.display}"
+
+    driver = None
     ffmpeg_process = None
     current_url = ""
     is_streaming = False
@@ -95,43 +72,51 @@ def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
 
             # --- حالة الإيقاف (0) ---
             if target_status == "0":
-                if is_streaming:
-                    print(f"🛑 إيقاف البث {stream_id}...")
-                    if ffmpeg_process:
-                        ffmpeg_process.terminate()
-                        ffmpeg_process = None
-                    try: driver.get("about:blank")
-                    except: pass
+                if is_streaming or driver:
+                    print(f"🛑 إيقاف كامل للبث {stream_id}")
+                    if ffmpeg_process: ffmpeg_process.terminate()
+                    if driver: driver.quit()
+                    ffmpeg_process = None
+                    driver = None
                     is_streaming = False
                     current_url = ""
 
             # --- حالة التشغيل (1) ---
             elif target_status == "1":
-                # فحص صحة الرابط (يجب أن يبدأ بـ http)
+                # فحص الرابط (يجب أن يبدأ بـ http ولا يحتوي على أحرف عربية مكسورة)
                 if not target_url.lower().startswith("http"):
-                    print(f"⚠️ تجاهل رابط غير صالح: {target_url}")
                     time.sleep(10)
                     continue
 
+                # إذا تغير الرابط أو كان البث متوقفاً
                 if not is_streaming or target_url != current_url:
-                    print(f"🚀 محاولة تشغيل/تحديث البث {stream_id}...")
+                    print(f"🔄 تغيير الرابط أو تشغيل جديد لـ {stream_id}...")
                     
+                    # 1. إغلاق كل شيء قديم لضمان مسح البيانات
+                    if ffmpeg_process: 
+                        ffmpeg_process.terminate()
+                        time.sleep(2)
+                    if driver: 
+                        driver.quit()
+                        time.sleep(2)
+
+                    # 2. تشغيل متصفح جديد تماماً (Fresh Instance)
                     try:
-                        if ffmpeg_process:
-                            ffmpeg_process.terminate()
-                            ffmpeg_process = None
-
-                        # التنظيف والفتح مع حماية من الأخطاء
-                        clear_browser_data(driver)
-                        driver.get(target_url) 
+                        driver = webdriver.Chrome(options=get_driver_options(width, height))
+                        driver.get(target_url)
+                        current_url = target_url
                         
-                        current_url = target_url # تحديث الرابط فوراً لمنع التكرار
-                        time.sleep(6) 
+                        time.sleep(8) # وقت كافٍ لتحميل الموقع بالكامل
                         
-                        apply_custom_changes(driver)
-                        driver.execute_script("setInterval(() => { window.scrollBy(0,1); window.scrollBy(0,-1); }, 50);")
+                        # تطبيق التنسيقات
+                        driver.execute_script("""
+                            var style = document.createElement('style');
+                            style.innerHTML = 'body { background: black !important; overflow: hidden !important; }';
+                            document.head.appendChild(style);
+                            setInterval(() => { window.scrollBy(0,1); window.scrollBy(0,-1); }, 50);
+                        """)
 
-                        # أمر FFmpeg المتزن (30 فريم لمنع التقطيع)
+                        # 3. تشغيل FFmpeg بعد استقرار المتصفح
                         ffmpeg_cmd = [
                             'ffmpeg', '-y', '-thread_queue_size', '4096',
                             '-f', 'x11grab', '-draw_mouse', '0', '-framerate', '30',
@@ -147,16 +132,18 @@ def start_stream(stream_id, rtmp_key, sink_name, width=720, height=1280):
                         
                         ffmpeg_process = subprocess.Popen(ffmpeg_cmd, env=env_vars)
                         is_streaming = True
+                        print(f"✅ البث {stream_id} يعمل الآن بنجاح.")
                         
                     except Exception as e:
-                        print(f"❌ فشل فتح الرابط بسبب خطأ في العنوان: {e}")
+                        print(f"❌ خطأ في التشغيل: {e}")
+                        if driver: driver.quit()
+                        driver = None
                         is_streaming = False
-                        current_url = "" # إعادة التصفير للمحاولة مرة أخرى
 
             time.sleep(10)
     finally:
         if ffmpeg_process: ffmpeg_process.terminate()
-        driver.quit()
+        if driver: driver.quit()
         disp.stop()
 
 if __name__ == "__main__":
@@ -166,5 +153,3 @@ if __name__ == "__main__":
         p2 = Process(target=start_stream, args=(2, R2, "Sink2"))
         p1.start(); p2.start()
         p1.join(); p2.join()
-    else:
-        print("❌ تأكد من ضبط R1 و R2 في البيئة.")
